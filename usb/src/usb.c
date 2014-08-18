@@ -102,6 +102,7 @@ STATIC_SIZE_CHECK_EQUAL(sizeof(struct endpoint_descriptor), 7);
 STATIC_SIZE_CHECK_EQUAL(sizeof(struct interface_descriptor), 9);
 STATIC_SIZE_CHECK_EQUAL(sizeof(struct configuration_descriptor), 9);
 STATIC_SIZE_CHECK_EQUAL(sizeof(struct device_descriptor), 18);
+STATIC_SIZE_CHECK_EQUAL(sizeof(struct interface_association_descriptor), 8);
 STATIC_SIZE_CHECK_EQUAL(sizeof(struct setup_packet), 8);
 STATIC_SIZE_CHECK_EQUAL(sizeof(struct microsoft_os_descriptor), 18);
 STATIC_SIZE_CHECK_EQUAL(sizeof(struct microsoft_extended_compat_header), 16);
@@ -686,6 +687,21 @@ static void stall_ep0(void)
 #endif
 }
 
+#ifdef NEEDS_CLEAR_STALL
+static void clear_ep0_stall(void)
+{
+	/* Clear Endpoint 0 Stall and UOWN. This is supposed to be done by
+	 * the hardware, but it isn't on PIC16 and PIC18. */
+#ifdef PPB_EP0_IN
+	uint8_t ppbi = (ep0_buf.flags & EP_TX_PPBI)? 1: 0;
+	SET_BDN(BDS0IN(ppbi), 0, EP_0_LEN);
+	/* The PPBI does not advance for STALL. */
+#else
+	SET_BDN(BDS0IN(0), 0, EP_0_LEN);
+#endif
+}
+#endif
+
 static void stall_ep_in(uint8_t ep)
 {
 	/* Stall Endpoint. It's important that DTSEN and DTS are zero.
@@ -796,7 +812,7 @@ static void start_control_return(const void *ptr, size_t len, size_t bytes_asked
 {
 	uint8_t bytes_to_send = MIN(len, EP_0_IN_LEN);
 	bytes_to_send = MIN(bytes_to_send, bytes_asked_for);
-	returning_short = len != bytes_asked_for;
+	returning_short = len < bytes_asked_for;
 	copy_to_ep0_in_buf(ptr, bytes_to_send);
 	ep0_data_stage_in_buffer = ((char*)ptr) + bytes_to_send;
 	ep0_data_stage_buf_remaining = MIN(bytes_asked_for, len) - bytes_to_send;
@@ -1113,6 +1129,12 @@ static inline void handle_ep0_setup()
 	ep0_data_stage_direc = setup->REQUEST.direction;
 	int8_t res;
 
+#ifdef NEEDS_CLEAR_STALL
+	/* The datasheets say the MCU will clear BSTALL and UOWN when
+	 * a SETUP packet is received. This does not seem to happen on
+	 * PIC16 or PIC18, so clear the stall explicitly. */
+	clear_ep0_stall();
+#endif
 	if (ep0_data_stage_buf_remaining) {
 		/* A SETUP transaction has been received while waiting
 		 * for a DATA stage to complete; something is broken.
